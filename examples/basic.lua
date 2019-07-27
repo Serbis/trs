@@ -85,6 +85,6 @@ c:exec("cd " .. dir)
 c:exec("mkdir data3")
 c:exec("cd data")
 spl = mymodule:split("127.0.0.1:22", ":")
-c:exec("rsync --partial --progress -avzhe 'ssh -p " .. spl[2] .. "' important_data.dat " .. user .. "@" .. spl[1] .. ":/home/serbis/code/main/rust/trs/examples/data3/", "password: ", true)
+c:exec("rsync --partial --progress -avzhe 'ssh -p " .. spl[2] .. "' important_data.dat " .. user .. "@" .. spl[1] .. ":" .. dir .. "/data3/", "password: ", true)
 c:exec(password)
 
