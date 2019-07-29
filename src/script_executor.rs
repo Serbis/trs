@@ -74,6 +74,16 @@ pub fn execute<'script>(cfg: ScriptConfig) {
             }).unwrap();
         globals.set("connect_ssh_simple", connect_ssh_simple);
 
+        // Bind global function 'connect_ssh_key'
+        let mut runtime = runtimer.clone();
+        let connect_ssh_key =
+            lua_ctx.create_function(move |_, (addr, user, private_key, prompt, passphrase, public_key): (String, String, String, Option<String>, Option<String>, Option<String>)| {
+                let mut connection = runtime.lock().unwrap().connect_ssh_key(addr, user, private_key, prompt, passphrase, public_key);
+
+                Ok(LuaConnection(connection))
+            }).unwrap();
+        globals.set("connect_ssh_key", connect_ssh_key);
+
         // Bind global function 'print'
         let runtime = runtimer.clone();
         let print =

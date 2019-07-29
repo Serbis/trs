@@ -19,6 +19,20 @@ use std::sync::mpsc::{Sender, Receiver};
 use std::io::stdout;
 use std::fs::File;
 use std::path::Path;
+use std::any::Any;
+use std::mem;
+
+pub struct SimpleAuthentication {
+    pub user: String,
+    pub password: String
+}
+
+pub struct KeyAuthentication {
+    pub user: String,
+    pub private_key: String,
+    pub public_key: Option<String>,
+    pub passphrase: Option<String>
+}
 
 enum CoOps {
     Exec1(String, Option<String>, Option<bool>),
@@ -44,7 +58,8 @@ pub struct Connection {
 impl Connection {
 
     /// Opens connection to to the specified host and authenticates them with user/password method.
-    pub fn new(addr: String, user: String, password: String, state_printer: TSafe<StatePrinter + Send>, out_logger: OutLogger, prompt: Option<Regex>)-> Connection {
+    pub fn new(addr: String, atk: Box<Any + Send>, state_printer: TSafe<StatePrinter + Send>, out_logger: OutLogger, prompt: Option<Regex>)-> Connection {
+        let mut atk = atk;
         let (sender, receiver) = mpsc::channel();
         let (r_sender, r_receiver) = mpsc::channel();
         let mut failed = false;
@@ -62,7 +77,17 @@ impl Connection {
         let error = error_o.clone();
 
         thread::spawn(move || {
-            state_printer.lock().unwrap().add_one_line("CONNECT SSH SIMPLE", &format!("{} {} ******", addr, user));
+
+            match_downcast_mut!(atk, {
+                a: SimpleAuthentication => {
+                    state_printer.lock().unwrap().add_one_line("CONNECT SSH SIMPLE", &format!("{} {}", addr, &a.user));
+                },
+                a: KeyAuthentication => {
+                    state_printer.lock().unwrap().add_one_line("CONNECT SSH KEY", &format!("{} {} {:?}", addr, &a.user, a.private_key));
+                },
+                _ => panic!("Unsupported auth type")
+            });
+
             let socket_addr: Result<SocketAddr, AddrParseError> = addr.parse();
 
             if socket_addr.is_err() {
@@ -104,15 +129,50 @@ impl Connection {
                 return;
             }
 
-            //session.userauth_pubkey_file()
-            let auth_result = session.userauth_password(&user, &password);
-            if auth_result.is_err() {
-                let err_t = format!("Authentication error: {}", auth_result.err().unwrap());
-                state_printer.lock().unwrap().error_current(&err_t);
-                Self::err_conn(&state_printer,error, err_t);
-                r_sender.send(CoData::BoolResult(false));
-                return;
-            }
+            match_downcast_mut!(atk, {
+                a: SimpleAuthentication => {
+                    let auth_result = session.userauth_password(&a.user, &a.password);
+                    if auth_result.is_err() {
+                        let err_t = format!("Authentication error: {}", auth_result.err().unwrap());
+                        state_printer.lock().unwrap().error_current(&err_t);
+                        Self::err_conn(&state_printer,error, err_t);
+                        r_sender.send(CoData::BoolResult(false));
+                        return;
+                    }
+                },
+                a: KeyAuthentication => {
+                    let public_key = mem::replace(&mut a.public_key, None);
+                    let public_key  = if public_key.is_some() {
+                        Some(Path::new(public_key.as_ref().unwrap()))
+                    } else {
+                        None
+                    };
+
+                     let public_key: Option<&Path>  = if public_key.is_some() {
+                        Some(public_key.as_ref().unwrap())
+                    } else {
+                        None
+                    };
+
+                    let passphrase = mem::replace(&mut a.passphrase, None);
+                    let passphrase: Option<&str> = if passphrase.is_some() {
+                        Some(&passphrase.as_ref().unwrap()[..])
+                    } else {
+                        None
+                    };
+
+                    let private_key = Path::new(&a.private_key);
+                    let auth_result = session.userauth_pubkey_file(&a.user, public_key, &private_key, passphrase);
+                    if auth_result.is_err() {
+                        let err_t = format!("Authentication error: {}", auth_result.err().unwrap());
+                        state_printer.lock().unwrap().error_current(&err_t);
+                        Self::err_conn(&state_printer,error, err_t);
+                        r_sender.send(CoData::BoolResult(false));
+                        return;
+                    }
+                },
+                _ => panic!("Unsupported auth type")
+            });
 
             // Default prompt
             let mut prompt = prompt;

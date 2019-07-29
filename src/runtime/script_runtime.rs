@@ -3,7 +3,7 @@
 use crate::tsafe::TSafe;
 use crate::out_logger::OutLogger;
 use crate::state_printer::state_printer::StatePrinter;
-use super::connection::Connection;
+use super::connection::{Connection, KeyAuthentication, SimpleAuthentication};
 use regex::Regex;
 use std::marker::PhantomData;
 use std::io::prelude::*;
@@ -38,8 +38,7 @@ impl  ScriptRuntime {
         }
     }
 
-    /// Creates new connection through ssh bridge use user/password authentication method. For
-    /// now, if at this stage some occurs during, panic will be called.
+    /// Creates new connection through ssh bridge use user/password authentication method
     pub fn connect_ssh_simple(&mut self, addr: String, user: String, password: String, prompt: Option<String>) -> TSafe<Connection> {
         let prompt = if prompt.is_some() {
             let p = Regex::new(&prompt.unwrap());
@@ -52,7 +51,34 @@ impl  ScriptRuntime {
             Some(self.default_prompt.clone())
         };
 
-        let conn = Connection::new(addr, user, password, self.state_printer.clone(), self.out_logger.clone(), prompt);
+        let atk = Box::new(SimpleAuthentication { user, password });
+        let conn = Connection::new(addr, atk, self.state_printer.clone(), self.out_logger.clone(), prompt);
+        let conn = tsafe!(conn);
+        self.connections.push(conn.clone());
+
+        conn
+    }
+
+    /// Creates new connection through ssh bridge use key authentication method
+    pub fn connect_ssh_key(&mut self, addr: String, user: String, private_key: String, prompt: Option<String>, passphrase: Option<String>, public_key: Option<String>) -> TSafe<Connection> {
+        let prompt = if prompt.is_some() {
+            let p = Regex::new(&prompt.unwrap());
+            if p.is_ok() {
+                Some(p.unwrap())
+            } else {
+                None
+            }
+        } else {
+            Some(self.default_prompt.clone())
+        };
+
+        let atk = Box::new(KeyAuthentication {
+            user,
+            private_key,
+            public_key,
+            passphrase
+        });
+        let conn = Connection::new(addr, atk, self.state_printer.clone(), self.out_logger.clone(), prompt);
         let conn = tsafe!(conn);
         self.connections.push(conn.clone());
 
